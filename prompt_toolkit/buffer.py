@@ -2,13 +2,13 @@
 Data structures for the Buffer.
 It holds the text, cursor position, history, etc...
 """
-import asyncio
+#import asyncio
 import os
 import re
 import shlex
 import subprocess
 import tempfile
-from asyncio import Task, ensure_future
+# from asyncio import Task, ensure_future
 from enum import Enum
 from functools import wraps
 from typing import (
@@ -44,6 +44,12 @@ from .search import SearchDirection, SearchState
 from .selection import PasteMode, SelectionState, SelectionType
 from .utils import Event, to_str
 from .validation import ValidationError, Validator
+
+from functools import partial
+
+#import logging, sys
+#logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+#LOG = logging.getLogger("buffer")
 
 __all__ = [
     'EditReadOnlyBuffer',
@@ -227,6 +233,7 @@ class Buffer:
                  on_completions_changed: Optional[BufferEventHandler] = None,
                  on_suggestion_set: Optional[BufferEventHandler] = None):
 
+        #logging.debug("<><>------>> CREATING BUFFER")
         # Accept both filters and booleans as input.
         enable_history_search = to_filter(enable_history_search)
         complete_while_typing = to_filter(complete_while_typing)
@@ -239,6 +246,7 @@ class Buffer:
         self.validator = validator
         self.tempfile_suffix = tempfile_suffix
         self.name = name
+        #logging.debug(f"<><>------>> CREATING BUFFER 1 {accept_handler}")
         self.accept_handler = accept_handler
 
         # Filters. (Usually, used by the key bindings to drive the buffer.)
@@ -257,6 +265,8 @@ class Buffer:
         self.history = InMemoryHistory() if history is None else history
 
         self.__cursor_position = 0
+
+        #logging.debug("------>> CREATING BUFFER 2")
 
         # Events
         self.on_text_changed: Event['Buffer'] = Event(self, on_text_changed)
@@ -277,6 +287,8 @@ class Buffer:
         # Reset other attributes.
         self.reset(document=document)
 
+        #logging.debug("------>> CREATING BUFFER 3")
+
         # Attach callback for new history entries.
         def new_history_item(sender: History) -> None:
             # Insert the new string into `_working_lines`.
@@ -285,6 +297,7 @@ class Buffer:
 
         self.history.get_item_loaded_event().add_handler(new_history_item)
         self.history.start_loading()
+        #logging.debug("------>> CREATING BUFFER 4 return")
 
     def __repr__(self) -> str:
         if len(self.text) < 15:
@@ -465,7 +478,7 @@ class Buffer:
         # (This happens on all change events, unlike auto completion, also when
         # deleting text.)
         if self.validator and self.validate_while_typing():
-            get_app().create_background_task(self._async_validator())
+            get_app().create_background_task(self._async_validator)
 
     def _cursor_position_changed(self) -> None:
         # Remove any complete state.
@@ -1145,11 +1158,11 @@ class Buffer:
 
             # Only complete when "complete_while_typing" is enabled.
             if self.completer and self.complete_while_typing():
-                get_app().create_background_task(self._async_completer())
+                get_app().create_background_task(self._async_completer)
 
             # Call auto_suggest.
             if self.auto_suggest:
-                get_app().create_background_task(self._async_suggester())
+                get_app().create_background_task(self._async_suggester)
 
     def undo(self) -> None:
         # Pop from the undo-stack until we find a text that if different from
@@ -1388,12 +1401,13 @@ class Buffer:
     def exit_selection(self) -> None:
         self.selection_state = None
 
-    def open_in_editor(self, validate_and_handle: bool = False) -> 'asyncio.Task[None]':
+    def open_in_editor(self, validate_and_handle: bool = False):  #z -> 'asyncio.Task[None]':
         """
         Open code in editor.
 
         This returns a future, and runs in a thread executor.
         """
+        #logging("oooooooooooooooooo Open_in_editor")
         if self.read_only():
             raise EditReadOnlyBuffer()
 
@@ -1433,7 +1447,7 @@ class Buffer:
                 # Clean up temp file.
                 os.remove(filename)
 
-        return get_app().create_background_task(run())
+        return get_app().create_background_task(run)
 
     def _open_file_in_editor(self, filename: str) -> bool:
         """
@@ -1485,11 +1499,13 @@ class Buffer:
         # Only one of these options can be selected.
         assert select_first + select_last + insert_common_part <= 1
 
-        get_app().create_background_task(self._async_completer(
+        get_app().create_background_task(partial(
+            self._async_completer,
             select_first=select_first,
             select_last=select_last,
             insert_common_part=insert_common_part,
-            complete_event=complete_event or CompleteEvent(completion_requested=True)))
+            complete_event=complete_event or CompleteEvent(completion_requested=True)
+        ))
 
     def _create_completer_coroutine(self) -> Callable[..., Awaitable[None]]:
         """
@@ -1648,6 +1664,7 @@ class Buffer:
         """
         Validate buffer and handle the accept action.
         """
+        #LOG.debug("_______!!!!!!!!________ in validate_and_handle")
         valid = self.validate(set_cursor=True)
 
         # When the validation succeeded, accept the input.

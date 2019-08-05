@@ -1,6 +1,6 @@
 import sys
 import time
-from asyncio import AbstractEventLoop, get_event_loop
+# from asyncio import AbstractEventLoop, get_event_loop
 from types import TracebackType
 from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
 
@@ -8,6 +8,10 @@ try:
     import contextvars
 except ImportError:
     from . import dummy_contextvars as contextvars  # type: ignore
+
+#import logging
+#logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+#LOG = logging.getLogger("utils")
 
 __all__ = [
     'run_in_executor_with_context',
@@ -20,7 +24,7 @@ _T = TypeVar('_T')
 
 def run_in_executor_with_context(
         func: Callable[..., _T], *args: Any,
-        loop: Optional[AbstractEventLoop] = None) -> Awaitable[_T]:
+        loop=None) -> Awaitable[_T]:
     """
     Run a function in an executor, but make sure it uses the same contextvars.
     This is required so that the function will see the right application.
@@ -36,7 +40,7 @@ def run_in_executor_with_context(
 def call_soon_threadsafe(
         func: Callable[[], None],
         max_postpone_time: Optional[float] = None,
-        loop: Optional[AbstractEventLoop] = None) -> None:
+        loop=None) -> None:
     """
     Wrapper around asyncio's `call_soon_threadsafe`.
 
@@ -53,31 +57,34 @@ def call_soon_threadsafe(
     However, we want to set a deadline value, for when the rendering should
     happen. (The UI should stay responsive).
     """
-    loop2 = loop or get_event_loop()
-
-    # If no `max_postpone_time` has been given, schedule right now.
-    if max_postpone_time is None:
-        loop2.call_soon_threadsafe(func)
-        return
-
-    max_postpone_until = time.time() + max_postpone_time
-
-    def schedule() -> None:
-        # When there are no other tasks scheduled in the event loop. Run it
-        # now.
-        if not loop2._ready:  # type: ignore
-            func()
-            return
-
-        # If the timeout expired, run this now.
-        if time.time() > max_postpone_until:
-            func()
-            return
-
-        # Schedule again for later.
-        loop2.call_soon_threadsafe(schedule)
-
-    loop2.call_soon_threadsafe(schedule)
+    #LOG.debug(f"BEFORE call_soon_threadsafe hack {func}")
+    func()
+    #LOG.debug("AFTER call_soon_threadsafe hack")
+    #loop2 = loop or get_event_loop()
+#
+#    # If no `max_postpone_time` has been given, schedule right now.
+#    if max_postpone_time is None:
+#        loop2.call_soon_threadsafe(func)
+#        return
+#
+#    max_postpone_until = time.time() + max_postpone_time
+#
+#    def schedule() -> None:
+#        # When there are no other tasks scheduled in the event loop. Run it
+#        # now.
+#        if not loop2._ready:  # type: ignore
+#            func()
+#            return
+#
+#        # If the timeout expired, run this now.
+#        if time.time() > max_postpone_until:
+#            func()
+#            return
+#
+#        # Schedule again for later.
+#        loop2.call_soon_threadsafe(schedule)
+#
+#    loop2.call_soon_threadsafe(schedule)
 
 
 def get_traceback_from_context(context: Dict[str, Any]) -> Optional[TracebackType]:

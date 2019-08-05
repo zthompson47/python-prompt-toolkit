@@ -18,6 +18,8 @@ from typing import (
     Union,
 )
 
+import trio
+
 from ..key_binding import KeyPress
 from .base import Input
 from .posix_utils import PosixStdinReader
@@ -29,6 +31,12 @@ __all__ = [
     'cooked_mode',
 ]
 
+
+
+
+#import logging
+#logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+#LOG = logging.getLogger("vt100")
 
 class Vt100Input(Input):
     """
@@ -52,6 +60,7 @@ class Vt100Input(Input):
             else:
                 raise io.UnsupportedOperation('Stdin is not a terminal.')
 
+        #LOG.debug("<><> stdin.fileno() worked")
         # Even when we have a file descriptor, it doesn't mean it's a TTY.
         # Normally, this requires a real TTY device, but people instantiate
         # this class often during unit tests as well. They use for instance
@@ -59,6 +68,8 @@ class Vt100Input(Input):
         # an error message and go on.
         isatty = stdin.isatty()
         fd = stdin.fileno()
+
+        #LOG.debug(f"<><> isatty: {isatty}, fd: {fd}")
 
         if not isatty and fd not in Vt100Input._fds_not_a_terminal:
             msg = 'Warning: Input is not to a terminal (fd=%r).\n'
@@ -88,12 +99,16 @@ class Vt100Input(Input):
         except ValueError:
             return False  # ValueError: I/O operation on closed file
 
-    def attach(self, input_ready_callback: Callable[[], None]) -> ContextManager[None]:
+    def attach(self, input_ready_callback: Callable[[], None], nursery=None) -> ContextManager[None]:
         """
         Return a context manager that makes this input active in the current
         event loop.
         """
-        return _attached_input(self, input_ready_callback)
+
+
+        #LOG.debug("vt100.attach input")
+
+        return _attached_input(self, input_ready_callback, nursery=nursery)
 
     def detach(self) -> ContextManager[None]:
         """
@@ -105,7 +120,9 @@ class Vt100Input(Input):
     def read_keys(self) -> List[KeyPress]:
         " Read list of KeyPress. "
         # Read text from stdin.
+        #LOG.debug("read_keys BEFORE")
         data = self.stdin_reader.read()
+        #LOG.debug(f"read_keys AFTER >{data}<")
 
         # Pass it through our vt100 parser.
         self.vt100_parser.feed(data)
@@ -146,34 +163,63 @@ class Vt100Input(Input):
         return 'fd-%s' % (self._fileno, )
 
 
-_current_callbacks: Dict[Tuple[AbstractEventLoop, int], Optional[Callable[[], None]]] = {}  # (loop, fd) -> current callback
+#_current_callbacks: Dict[Tuple[AbstractEventLoop, int], Optional[Callable[[], None]]] = {}  # (loop, fd) -> current callback
+_current_callbacks = {}  # (loop, fd) -> current callback
 
 
 @contextlib.contextmanager
-def _attached_input(input: Vt100Input, callback: Callable[[], None]) -> Generator[None, None, None]:
+def _attached_input(input: Vt100Input, callback: Callable[[], None], nursery=None) -> Generator[None, None, None]:
     """
     Context manager that makes this input active in the current event loop.
 
     :param input: :class:`~prompt_toolkit.input.Input` object.
     :param callback: Called when the input is ready to read.
     """
-    loop = get_event_loop()
-    fd = input.fileno()
-    previous = _current_callbacks.get((loop, fd))
+    #LOG.debug("oooooooooooooooohhhhhhhhhhhhhhhhhhhhhhhh!!!!!!!!!!!!!!!!11")
+    #loop = get_event_loop()
 
-    loop.add_reader(fd, callback)
-    _current_callbacks[loop, fd] = callback
+    fd = input.fileno()
+    #LOG.debug(f"oooooooooooooooohhhhhhhhhhhhhhhhhhhhhhhh fileno {input.fileno()}")
+    previous, prev_cancel = _current_callbacks.get((nursery, fd), (None, None))
+    #previous = _current_callbacks.get((loop, fd))
+
+    #LOG.debug("oooooooooooooooohhhhhhhhhhhhhhhhhhhhhhhh!!!!!!!!!!!!!!!!11")
+
+    #loop.add_reader(fd, callback)
+    #_current_callbacks[loop, fd] = callback
+    reader_scope = trio.CancelScope()
+    async def _trio_reader(fd, callback, cancel_scope):
+        #LOG.debug(f"Trio Reader I with fd[{fd}] {callback}")
+        with cancel_scope:
+            while True:
+                await trio.hazmat.wait_readable(fd)
+                callback()
+    nursery.start_soon(_trio_reader, fd, callback, reader_scope)
+    _current_callbacks[nursery, fd] = (callback, reader_scope)
+
 
     try:
+        #LOG.debug("Attach BEFORE yield")
         yield
+        #LOG.debug("Attach AFTER yield")
     finally:
-        loop.remove_reader(fd)
+        reader_scope.cancel()
+#        loop.remove_reader(fd)
+#
 
+        # ???
         if previous:
-            loop.add_reader(fd, previous)
-            _current_callbacks[loop, fd] = previous
+            _cancel = trio.CancelScope()
+            nursery.start_soon(_trio_reader, fd, previous, _cancel)
+            _current_callbacks[nursery, fd] = (previous, _cancel)
         else:
-            del _current_callbacks[loop, fd]
+            del _current_callbacks[nursery, fd]
+
+#        if previous:
+#            loop.add_reader(fd, previous)
+#            _current_callbacks[loop, fd] = previous
+#        else:
+#            del _current_callbacks[loop, fd]
 
 
 @contextlib.contextmanager

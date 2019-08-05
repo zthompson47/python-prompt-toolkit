@@ -6,8 +6,11 @@ from prompt_toolkit.layout import InvalidLayoutError, Layout
 from prompt_toolkit.layout.containers import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import BufferControl
 
+from prompt_toolkit.application import current
 
-def test_layout_class():
+
+async def test_layout_class(nursery):
+    current.nursery = nursery
     c1 = BufferControl()
     c2 = BufferControl()
     c3 = BufferControl()

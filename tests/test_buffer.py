@@ -3,26 +3,27 @@ from __future__ import unicode_literals
 import pytest
 
 from prompt_toolkit.buffer import Buffer
-
+from prompt_toolkit.application import current
 
 @pytest.fixture
-def _buffer():
+async def _buffer(nursery):
+    current.nursery = nursery
     buff = Buffer()
     return buff
 
 
-def test_initial(_buffer):
+async def test_initial(_buffer):
     assert _buffer.text == ''
     assert _buffer.cursor_position == 0
 
 
-def test_insert_text(_buffer):
+async def test_insert_text(_buffer):
     _buffer.insert_text('some_text')
     assert _buffer.text == 'some_text'
     assert _buffer.cursor_position == len('some_text')
 
 
-def test_cursor_movement(_buffer):
+async def test_cursor_movement(_buffer):
     _buffer.insert_text('some_text')
     _buffer.cursor_left()
     _buffer.cursor_left()
@@ -34,7 +35,7 @@ def test_cursor_movement(_buffer):
     assert _buffer.cursor_position == len('some_teA')
 
 
-def test_backspace(_buffer):
+async def test_backspace(_buffer):
     _buffer.insert_text('some_text')
     _buffer.cursor_left()
     _buffer.cursor_left()
@@ -44,7 +45,7 @@ def test_backspace(_buffer):
     assert _buffer.cursor_position == len('some_t')
 
 
-def test_cursor_up(_buffer):
+async def test_cursor_up(_buffer):
     # Cursor up to a line thats longer.
     _buffer.insert_text('long line1\nline2')
     _buffer.cursor_up()
@@ -63,7 +64,7 @@ def test_cursor_up(_buffer):
     assert _buffer.document.cursor_position == 5
 
 
-def test_cursor_down(_buffer):
+async def test_cursor_down(_buffer):
     _buffer.insert_text('line1\nline2')
     _buffer.cursor_position = 3
 
@@ -80,7 +81,7 @@ def test_cursor_down(_buffer):
     assert _buffer.document.cursor_position == len('long line1\na')
 
 
-def test_join_next_line(_buffer):
+async def test_join_next_line(_buffer):
     _buffer.insert_text('line1\nline2\nline3')
     _buffer.cursor_up()
     _buffer.join_next_line()
@@ -96,14 +97,14 @@ def test_join_next_line(_buffer):
     assert _buffer.text == 'line1'
 
 
-def test_newline(_buffer):
+async def test_newline(_buffer):
     _buffer.insert_text('hello world')
     _buffer.newline()
 
     assert _buffer.text == 'hello world\n'
 
 
-def test_swap_characters_before_cursor(_buffer):
+async def test_swap_characters_before_cursor(_buffer):
     _buffer.insert_text('hello world')
     _buffer.cursor_left()
     _buffer.cursor_left()

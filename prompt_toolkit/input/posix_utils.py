@@ -6,6 +6,11 @@ __all__ = [
     'PosixStdinReader',
 ]
 
+#import sys
+#import logging
+#logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+#LOG = logging.getLogger("posix_utils")
+
 
 class PosixStdinReader:
     """
@@ -33,6 +38,7 @@ class PosixStdinReader:
     # with "Option as Meta" checked (You should choose "Option as +Esc".)
 
     def __init__(self, stdin_fd: int, errors: str = 'surrogateescape') -> None:
+        #LOG.debug(">>> <> <<< IN PosixStdinReader.__init__")
         self.stdin_fd = stdin_fd
         self.errors = errors
 
@@ -57,7 +63,12 @@ class PosixStdinReader:
         the input stream was not yet closed. This means that something went
         wrong during the decoding.
         """
+        #LOG.debug(">>> <> <<< IN PosixStdinReader.read")
+        #import traceback
+        #for line in traceback.extract_stack():
+        #    pass#LOG.debug(f">>>--->>> {line}")
         if self.closed:
+            #LOG.debug(">>> <> <<< closed?!?")
             return u''
 
         # Check whether there is some input to read. `os.read` would block
@@ -66,9 +77,12 @@ class PosixStdinReader:
         # function is only called when there is something to read, but for some
         # reason this happens in certain situations.)
         try:
+            #LOG.debug(f">>> <> <<< try select {self.stdin_fd}")
             if not select.select([self.stdin_fd], [], [], 0)[0]:
+                #LOG.debug(">>> <> <<< not select")
                 return u''
         except IOError:
+            #LOG.debug(">>> <> <<< IOERROR")
             # Happens for instance when the file descriptor was closed.
             # (We had this in ptterm, where the FD became ready, a callback was
             # scheduled, but in the meantime another callback closed it already.)
@@ -79,14 +93,20 @@ class PosixStdinReader:
         #       Somehow that causes some latency when the escape
         #       character is pressed. (Especially on combination with the `select`.)
         try:
+            #LOG.debug(">>> <> <<< before read")
             data = os.read(self.stdin_fd, count)
+            #LOG.debug(f">>> <> <<< after read >{data}<")
 
             # Nothing more to read, stream is closed.
             if data == b'':
+                #LOG.debug(f">>> <> <<< self.closed eof return")
                 self.closed = True
                 return ''
         except OSError:
+            #LOG.debug(f">>> <> <<< OSERROR")
             # In case of SIGWINCH
             data = b''
 
-        return self._stdin_decoder.decode(data)
+        _decoded = self._stdin_decoder.decode(data)
+        #LOG.debug(f">>> <> <<< return decoded >{_decoded}<")
+        return _decoded

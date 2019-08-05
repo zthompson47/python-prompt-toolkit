@@ -1,4 +1,4 @@
-from .application import Application
+from .application import Application, TrioFuture
 from .current import (
     create_app_session,
     get_app,
@@ -12,6 +12,7 @@ from .run_in_terminal import in_terminal, run_in_terminal
 __all__ = [
     # Application.
     'Application',
+    'TrioFuture',
 
     # Current.
     'get_app_session',

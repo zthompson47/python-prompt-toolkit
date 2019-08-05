@@ -1,8 +1,31 @@
 """
 Tools for running functions on the terminal above the current application or prompt.
 """
-from asyncio import Future, ensure_future
+#from asyncio import Future, ensure_future
 from typing import AsyncGenerator, Awaitable, Callable, TypeVar
+
+import trio
+class TrioFuture:
+    event = trio.Event()
+    exception = None
+    result = None
+    def __await__(self):
+        return self.event.wait().__await__()
+    def set_exception(self, exc):
+        self.exception = exc
+        self.event.set()
+        raise exc
+    def set_result(self, result):
+        self.result = result
+        self.event.set()
+    def done(self):
+        return self.event.is_set()
+    async def wait(self):
+        await self.event.wait()
+        return self.result
+#import logging, sys
+#logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+#LOG = logging.getLogger("patch_stdout")
 
 from prompt_toolkit.eventloop import run_in_executor_with_context
 
@@ -24,7 +47,7 @@ _T = TypeVar('_T')
 
 def run_in_terminal(
         func: Callable[[], _T], render_cli_done: bool = False,
-        in_executor: bool = False) -> Awaitable[_T]:
+        in_executor: bool = False, nursery=None) -> Awaitable[_T]:
     """
     Run function on the terminal above the current application or prompt.
 
@@ -46,14 +69,22 @@ def run_in_terminal(
 
     :returns: A `Future`.
     """
+    #LOG.debug(f"<><> run_in_terminal <><> {nursery}")
     async def run() -> _T:
         async with in_terminal(render_cli_done=render_cli_done):
             if in_executor:
-                return await run_in_executor_with_context(func)
+                #return await run_in_executor_with_context(func)
+                return await trio.to_thread.run_sync(func)
             else:
                 return func()
 
-    return ensure_future(run())
+    #z return ensure_future(run())
+    future = TrioFuture()
+    async def ensure_future(coro):
+        result = await coro
+        future.set_result(result)
+    nursery.start_soon(ensure_future, run())
+    return future
 
 
 @asynccontextmanager
@@ -77,7 +108,8 @@ async def in_terminal(render_cli_done: bool = False) -> AsyncGenerator[None, Non
     # When a previous `run_in_terminal` call was in progress. Wait for that
     # to finish, before starting this one. Chain to previous call.
     previous_run_in_terminal_f = app._running_in_terminal_f
-    new_run_in_terminal_f: Future[None] = Future()
+    #new_run_in_terminal_f: Future[None] = Future()
+    new_run_in_terminal_f = TrioFuture()
     app._running_in_terminal_f = new_run_in_terminal_f
 
     # Wait for the previous `run_in_terminal` to finish.

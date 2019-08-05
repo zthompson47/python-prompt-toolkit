@@ -7,9 +7,11 @@ The `KeyProcessor` will according to the implemented keybindings call the
 correct callbacks when new key presses are feed through `feed`.
 """
 import weakref
-from asyncio import sleep
+#z from asyncio import sleep
 from collections import deque
 from typing import TYPE_CHECKING, Any, Deque, Generator, List, Optional, Union
+
+import trio
 
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.enums import EditingMode
@@ -18,6 +20,10 @@ from prompt_toolkit.keys import Keys
 from prompt_toolkit.utils import Event
 
 from .key_bindings import Binding, KeyBindingsBase
+
+#import logging, sys
+#logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+#LOG = logging.getLogger("key_processor")
 
 if TYPE_CHECKING:
     from prompt_toolkit.application import Application
@@ -180,6 +186,7 @@ class KeyProcessor:
 
                 # Exact matches found, call handler.
                 if not is_prefix_of_longer_match and matches:
+                    #LOG.debug("_______________________:-)__________________")
                     self._call_handler(matches[-1], key_sequence=buffer[:])
                     del buffer[:]  # Keep reference.
 
@@ -219,12 +226,17 @@ class KeyProcessor:
         """
         :param first: If true, insert before everything else.
         """
+        #LOG.debug("feed_multiple ENTER")
         self._keys_pressed += len(key_presses)
+        #LOG.debug(f"feed_multiple len {len(key_presses)}/{self._keys_pressed}")
 
         if first:
+            #LOG.debug("feed_multiple first")
             self.input_queue.extendleft(reversed(key_presses))
         else:
+            #LOG.debug("feed_multiple not first")
             self.input_queue.extend(key_presses)
+        #LOG.debug(f"feed_multiple EXIT {self.input_queue}")
 
     def process_keys(self) -> None:
         """
@@ -261,6 +273,7 @@ class KeyProcessor:
         is_flush = False
 
         while not_empty():
+            ##LOG.debug("... ... ... ... ... ... ... in while not_empty")
             keys_processed = True
 
             # Process next key.
@@ -273,7 +286,9 @@ class KeyProcessor:
                 self.before_key_press.fire()
 
             try:
+                #LOG.debug(f"... ... ... ... ... before process coroutine {key_press}")
                 self._process_coroutine.send(key_press)
+                #LOG.debug("... ... ... ... ... after process coroutine")
             except Exception:
                 # If for some reason something goes wrong in the parser, (maybe
                 # an exception was raised) restart the processor for next time.
@@ -283,7 +298,11 @@ class KeyProcessor:
                 raise
 
             if not is_flush and not is_cpr:
+                #LOG.debug(f"... ... ... ... ... before fire()")
                 self.after_key_press.fire()
+                #LOG.debug(f"... ... ... ... ... after fire()")
+
+            #LOG.debug(f"... ...>{not_empty()}< ... ... end while not_empty")
 
         if keys_processed:
             # Invalidate user interface.
@@ -402,11 +421,17 @@ class KeyProcessor:
 
         async def wait() -> None:
             " Wait for timeout. "
-            await sleep(timeout)
+            #z await sleep(timeout)
+            #LOG.debug(f"in start_timeout, sleep for {timeout}")
+            await trio.sleep(timeout)
+            #logging.debug(f"in start_timeout, slept for {timeout}")
 
             if len(self.key_buffer) > 0 and counter == self._keys_pressed:
+                #logging.debug(f"in start_timeout, about to flush keys")
                 # (No keys pressed in the meantime.)
                 flush_keys()
+                #logging.debug(f"in start_timeout, after flush keys")
+            #logging.debug(f"in start_timeout, at end of wait................")
 
         def flush_keys() -> None:
             " Flush keys. "
@@ -416,7 +441,7 @@ class KeyProcessor:
         # Automatically flush keys.
         # (_daemon needs to be set, otherwise, this will hang the
         # application for .5 seconds before exiting.)
-        app.create_background_task(wait())
+        app.create_background_task(wait)
 
 
 class KeyPressEvent:

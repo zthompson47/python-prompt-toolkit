@@ -4,6 +4,9 @@ from typing import ContextManager, TextIO, cast
 from ..utils import DummyContext
 from .vt100 import Vt100Input
 
+#import logging
+#logging.basicConfig(level=logging.DEBUG, filename="/tmp/bla.log")
+
 __all__ = [
     'PosixPipeInput',
 ]
@@ -22,6 +25,7 @@ class PosixPipeInput(Vt100Input):
     """
     _id = 0
     def __init__(self, text: str = '') -> None:
+        #logging.debug("<><><><>PosixPipeInput.__init__")
         self._r, self._w = os.pipe()
 
         class Stdin:
@@ -47,6 +51,7 @@ class PosixPipeInput(Vt100Input):
 
     def send_text(self, data: str) -> None:
         " Send text to the input. "
+        #logging.debug(f"\n\n[[[[[[[[[[[[ send_text {data} ]]]]]]]]]]]]]]]\n\n")
         os.write(self._w, data.encode('utf-8'))
 
     def raw_mode(self) -> ContextManager[None]:

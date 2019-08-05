@@ -4,6 +4,8 @@ Implementation for async generators.
 from asyncio import Queue, get_event_loop
 from typing import AsyncGenerator, Callable, Iterable, TypeVar, Union
 
+import trio
+
 from .utils import run_in_executor_with_context
 
 __all__ = [
@@ -31,7 +33,7 @@ async def generator_to_async_generator(
     quitting = False
     _done = _Done()
     q: Queue[Union[_T, _Done]] = Queue()
-    loop = get_event_loop()
+    # loop = get_event_loop()
 
     def runner() -> None:
         """
@@ -40,7 +42,8 @@ async def generator_to_async_generator(
         """
         try:
             for item in get_iterable():
-                loop.call_soon_threadsafe(q.put_nowait, item)
+                trio.from_thread.run_sync(q.put_nowait, item)
+                # loop.call_soon_threadsafe(q.put_nowait, item)
 
                 # When this async generator was cancelled (closed), stop this
                 # thread.
@@ -48,10 +51,12 @@ async def generator_to_async_generator(
                     break
 
         finally:
-            loop.call_soon_threadsafe(q.put_nowait, _done)
+            trio.from_thread.run_sync(q.put_nowait, _done)
+            # loop.call_soon_threadsafe(q.put_nowait, _done)
 
     # Start background thread.
-    run_in_executor_with_context(runner)
+    #run_in_executor_with_context(runner)
+    await trio.to_thread.run_sync(runner)
 
     try:
         while True:

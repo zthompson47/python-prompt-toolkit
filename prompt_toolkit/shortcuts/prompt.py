@@ -139,6 +139,10 @@ from prompt_toolkit.widgets.toolbars import (
     ValidationToolbar,
 )
 
+#import logging, sys
+#logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+#LOG = logging.getLogger("prompt")
+
 if TYPE_CHECKING:
     from prompt_toolkit.formatted_text.base import MagicFormattedText
 
@@ -452,15 +456,18 @@ class PromptSession(Generic[_T]):
         Create and return the default input buffer.
         """
         dyncond = self._dyncond
+        #logging.debug("??????????????????????????????? cretdefbuf ???????????")
 
         # Create buffers list.
         def accept(buff: Buffer) -> bool:
             """ Accept the content of the default buffer. This is called when
             the validation succeeds. """
+            #LOG.debug("??????????????????????????????? ACCEPT ???????????")
             cast(Application[str], self.app).exit(result=buff.document.text)
             return True  # Keep text, we call 'reset' later on.
 
-        return Buffer(
+        #logging.debug("??????????????????????????????? BEFORE cretdefbuf ???????????")
+        buf = Buffer(
             name=DEFAULT_BUFFER,
                 # Make sure that complete_while_typing is disabled when
                 # enable_history_search is enabled. (First convert to Filter,
@@ -480,6 +487,8 @@ class PromptSession(Generic[_T]):
             auto_suggest=DynamicAutoSuggest(lambda: self.auto_suggest),
             accept_handler=accept,
             tempfile_suffix=lambda: self.tempfile_suffix)
+        #logging.debug("??????????????????????????????? AFTER cretdefbuf ???????????")
+        return buf
 
     def _create_search_buffer(self) -> Buffer:
         return Buffer(name=SEARCH_BUFFER)
@@ -708,6 +717,7 @@ class PromptSession(Generic[_T]):
 
         @handle('enter', filter=do_accept & default_focused)
         def _(event: E) -> None:
+            #LOG.debug(f"www www www www www !!!!!!!    {event}")
             " Accept input when enter has been pressed. "
             self.default_buffer.validate_and_handle()
 
@@ -900,9 +910,11 @@ class PromptSession(Generic[_T]):
         if tempfile_suffix is not None:
             self.tempfile_suffix = tempfile_suffix
 
-        self._add_pre_run_callables(pre_run, accept_default)
+        self._add_pre_run_callables(pre_run, accept_default)  #z
         self.default_buffer.reset(default if isinstance(default, Document) else Document(default))
         self.app.refresh_interval = self.refresh_interval  # This is not reactive.
+
+        #logging.debug("<><> prompt about to run")
 
         return self.app.run()
 
@@ -1023,7 +1035,7 @@ class PromptSession(Generic[_T]):
         if tempfile_suffix is not None:
             self.tempfile_suffix = tempfile_suffix
 
-        self._add_pre_run_callables(pre_run, accept_default)
+        self._add_pre_run_callables(pre_run, accept_default)  #z
         self.default_buffer.reset(default if isinstance(default, Document) else Document(default))
         self.app.refresh_interval = self.refresh_interval  # This is not reactive.
 
@@ -1032,17 +1044,25 @@ class PromptSession(Generic[_T]):
     def _add_pre_run_callables(self, pre_run: Optional[Callable[[], None]],
                                accept_default: bool) -> None:
 
+        #LOG.debug("??!??!??!??!??!??!??!??!??!??!??!?? prerun2 with loop...")
         def pre_run2() -> None:
+            #LOG.debug("??!??!??!??!??!??!??!??!??!??!??!?? <> ENTER prerun2 <>")
             if pre_run:
+                #LOG.debug("??!??!??!??!??!??!??!??!??!??!??!?? <> pre_run() <>")
                 pre_run()
 
             if accept_default:
+                #LOG.debug("??!??!??!??!??!??!??!??!??!??!??!?? <> accept_default <>")
                 # Validate and handle input. We use `call_from_executor` in
                 # order to run it "soon" (during the next iteration of the
                 # event loop), instead of right now. Otherwise, it won't
                 # display the default value.
-                get_event_loop().call_soon(
-                    self.default_buffer.validate_and_handle)
+                from prompt_toolkit.application import current
+                current.nursery.start_soon(self.default_buffer.validate_and_handle)
+                #get_event_loop().call_soon(
+                #    self.default_buffer.validate_and_handle)
+
+            #LOG.debug("??!??!??!??!??!??!??!??!??!??!??!?? <> EXIT prerun2 <>")
 
         self.app.pre_run_callables.append(pre_run2)
 

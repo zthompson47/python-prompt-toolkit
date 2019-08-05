@@ -15,7 +15,8 @@ class DummyApplication(Application[None]):
     When no :class:`.Application` is running,
     :func:`.get_app` will run an instance of this :class:`.DummyApplication` instead.
     """
-    def __init__(self) -> None:
+    def __init__(self, nursery) -> None:
+        self.nursery = nursery
         super().__init__(output=DummyOutput(), input=DummyInput())
 
     def run(self, pre_run: Optional[Callable[[], None]] = None,

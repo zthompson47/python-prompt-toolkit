@@ -118,6 +118,9 @@ class DummyInput(Input):
         return _dummy_context_manager()
 
     def attach(self, input_ready_callback: Callable[[], None]) -> ContextManager[None]:
+        #import logging
+        #logging.basicConfig(level=logging.DEBUG, filename="/tmp/bla.log")
+        #logging.debug("????????????????????????????? dummy input")
         return _dummy_context_manager()
 
     def detach(self) -> ContextManager[None]:

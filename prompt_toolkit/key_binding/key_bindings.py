@@ -56,6 +56,10 @@ from prompt_toolkit.keys import KEY_ALIASES, Keys
 if TYPE_CHECKING:
     from .key_processor import KeyPressEvent
 
+#import logging,sys
+#logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+#LOG = logging.getLogger("key_bindings")
+
 
 __all__ = [
     'Binding',
@@ -96,6 +100,7 @@ class Binding:
         self.record_in_macro = to_filter(record_in_macro)
 
     def call(self, event: 'KeyPressEvent') -> None:
+        #LOG.debug(f">>> GOT ONE!! {event}")
         self.handler(event)
 
     def __repr__(self) -> str:

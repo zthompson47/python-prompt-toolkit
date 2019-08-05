@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Generator, Optional
 
 try:
     from contextvars import ContextVar
+    from contextvars import copy_context
 except ImportError:
     from prompt_toolkit.eventloop.dummy_contextvars import ContextVar  # type: ignore
 
@@ -69,7 +70,7 @@ _current_app_session: ContextVar['AppSession'] = ContextVar(
 def get_app_session() -> AppSession:
     return _current_app_session.get()
 
-
+nursery = None
 def get_app() -> 'Application[Any]':
     """
     Get the current active (running) Application.
@@ -93,8 +94,10 @@ def get_app() -> 'Application[Any]':
     if session.app is not None:
         return session.app
 
+    global nursery
+
     from .dummy import DummyApplication
-    return DummyApplication()
+    return DummyApplication(nursery)
 
 
 def get_app_or_none() -> Optional['Application[Any]']:

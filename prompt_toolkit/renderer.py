@@ -2,7 +2,7 @@
 Renders the command line on the console.
 (Redraws parts of the input line that were changed.)
 """
-from asyncio import FIRST_COMPLETED, Future, sleep, wait
+#from asyncio import FIRST_COMPLETED, Future, sleep, wait
 from collections import deque
 from enum import Enum
 from typing import (
@@ -15,6 +15,8 @@ from typing import (
     Optional,
     Tuple,
 )
+
+import trio
 
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.data_structures import Point, Size
@@ -35,6 +37,10 @@ from prompt_toolkit.utils import is_windows
 if TYPE_CHECKING:
     from prompt_toolkit.application import Application
     from prompt_toolkit.layout.layout import Layout
+
+#import logging
+#logging.basicConfig(level=logging.DEBUG, filename="/tmp/bla.log")
+#LOG = logging.getLogger("renderer")
 
 
 __all__ = [
@@ -311,7 +317,8 @@ class Renderer:
         self._bracketed_paste_enabled = False
 
         # Future set when we are waiting for a CPR flag.
-        self._waiting_for_cpr_futures: Deque[Future[None]] = deque()
+        #z self._waiting_for_cpr_futures: Deque[Future[None]] = deque()
+        self._waiting_for_cpr_futures = deque()
         self.cpr_support = CPR_Support.UNKNOWN
         if not input.responds_to_cpr:
             self.cpr_support = CPR_Support.NOT_SUPPORTED
@@ -411,49 +418,61 @@ class Renderer:
         For vt100: Do CPR request. (answer will arrive later.)
         For win32: Do API call. (Answer comes immediately.)
         """
+        #logging.debug("__________________IN request_abso..curs..pos")
         # Only do this request when the cursor is at the top row. (after a
         # clear or reset). We will rely on that in `report_absolute_cursor_row`.
         assert self._cursor_pos.y == 0
 
         # In full-screen mode, always use the total height as min-available-height.
         if self.full_screen:
+            #logging.debug("__________________IN request_abso..curs..pos FULLSCREEN")
             self._min_available_height = self.output.get_size().rows
 
         # For Win32, we have an API call to get the number of rows below the
         # cursor.
         elif is_windows():
+            #logging.debug("__________________IN request_abso..curs..pos WNDOS")
             self._min_available_height = self.output.get_rows_below_cursor_position()
 
         # Use CPR.
         else:
+            #logging.debug("__________________IN request_abso..curs..pos ELSO")
             if self.cpr_support == CPR_Support.NOT_SUPPORTED:
+                #LOG.debug("__________________IN ><><><>< self.cpr_support")
                 return
 
             def do_cpr() -> None:
+                #LOG.debug("__________________IN ><><><>< do_cpr")
                 # Asks for a cursor position report (CPR).
-                self._waiting_for_cpr_futures.append(Future())
+                self._waiting_for_cpr_futures.append(trio.Event())
                 self.output.ask_for_cpr()
 
             if self.cpr_support == CPR_Support.SUPPORTED:
+                #LOG.debug("__________________IN ><><><>< cpr_support")
                 do_cpr()
 
             # If we don't know whether CPR is supported, only do a request if
             # none is pending, and test it, using a timer.
             elif self.cpr_support == CPR_Support.UNKNOWN and not self.waiting_for_cpr:
+                #LOG.debug("__________________IN ><><><>< cpr_support UNKONW")
                 do_cpr()
 
                 async def timer() -> None:
-                    await sleep(self.CPR_TIMEOUT)
+                    #LOG.debug("__________________IN ><><><>< cpr_support UNKONW before timer")
+                    await trio.sleep(self.CPR_TIMEOUT)
+                    #LOG.debug(f"__________________IN ><><><>< cpr_support UNKONW after timer {self.cpr_support}")
 
                     # Not set in the meantime -> not supported.
                     if self.cpr_support == CPR_Support.UNKNOWN:
+                        #LOG.debug("__________________IN ><><><>< cpr_support UNKONW NOT_SUPORTED now")
                         self.cpr_support = CPR_Support.NOT_SUPPORTED
 
                         if self.cpr_not_supported_callback:
                             # Make sure to call this callback in the main thread.
                             self.cpr_not_supported_callback()
 
-                get_app().create_background_task(timer())
+                #z get_app().create_background_task(timer())
+                get_app().create_background_task(timer)
 
     def report_absolute_cursor_row(self, row: int) -> None:
         """
@@ -476,7 +495,7 @@ class Renderer:
         except IndexError:
             pass  # Received CPR response without having a CPR.
         else:
-            f.set_result(None)
+            f.set()
 
     @property
     def waiting_for_cpr(self) -> bool:
@@ -498,19 +517,25 @@ class Renderer:
 
         async def wait_for_responses() -> None:
             for response_f in cpr_futures:
-                await response_f
+                await response_f.wait()
 
-        async def wait_for_timeout() -> None:
-            await sleep(timeout)
+        #async def wait_for_timeout() -> None:
+        #    await trio.sleep(timeout)
+#
+#            # Got timeout, erase queue.
+#            self._waiting_for_cpr_futures = deque()
 
-            # Got timeout, erase queue.
-            self._waiting_for_cpr_futures = deque()
+        #coroutines = [
+        #    wait_for_responses(),
+        #    wait_for_timeout(),
+        #]
+        #await wait(coroutines, return_when=FIRST_COMPLETED)
 
-        coroutines = [
-            wait_for_responses(),
-            wait_for_timeout(),
-        ]
-        await wait(coroutines, return_when=FIRST_COMPLETED)
+        with trio.move_on_after(timeout):
+            await wait_for_responses()
+            return
+        self._waiting_for_cpr_futures = deque()
+
 
     def render(self, app: 'Application[Any]', layout: 'Layout',
                is_done: bool = False) -> None:

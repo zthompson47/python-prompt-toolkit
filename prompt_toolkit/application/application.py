@@ -1,18 +1,18 @@
-import asyncio
+#z import asyncio
 import os
 import re
 import signal
 import sys
 import time
-from asyncio import (
-    AbstractEventLoop,
-    CancelledError,
-    Future,
-    Task,
-    ensure_future,
-    get_event_loop,
-    sleep,
-)
+#z from asyncio import (
+#z     AbstractEventLoop,
+#z     CancelledError,
+#z     Future,
+#z     Task,
+#z     ensure_future,
+#z     get_event_loop,
+#z     sleep,
+#z )
 from subprocess import Popen
 from traceback import format_tb
 from typing import (
@@ -33,6 +33,9 @@ from typing import (
     overload,
 )
 
+import trio
+from functools import partial
+
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.cache import SimpleCache
 from prompt_toolkit.clipboard import Clipboard, InMemoryClipboard
@@ -41,7 +44,7 @@ from prompt_toolkit.eventloop import (
     get_traceback_from_context,
     run_in_executor_with_context,
 )
-from prompt_toolkit.eventloop.utils import call_soon_threadsafe
+from prompt_toolkit.eventloop.utils import call_soon_threadsafe #z
 from prompt_toolkit.filters import Condition, Filter, FilterOrBool, to_filter
 from prompt_toolkit.formatted_text import AnyFormattedText
 from prompt_toolkit.input.base import Input
@@ -88,6 +91,10 @@ from prompt_toolkit.utils import Event, in_main_thread
 from .current import get_app_session, set_app
 from .run_in_terminal import in_terminal, run_in_terminal
 
+import logging
+logging.basicConfig(level=logging.DEBUG, filename="/tmp/ptk.log")
+LOG = logging.getLogger("<> application <>")
+
 try:
     import contextvars
 except ImportError:
@@ -102,6 +109,34 @@ __all__ = [
 E = KeyPressEvent
 _AppResult = TypeVar('_AppResult')
 ApplicationEventHandler = Callable[['Application[_AppResult]'], None]
+
+
+class TrioFuture:
+    def __init__(self):
+        self.event = trio.Event()
+        self.exception = None
+        self.result = None
+
+    # https://stackoverflow.com/questions/33409888/\
+    # how-can-i-await-inside-future-like-objects-await
+    def __await__(self):
+        return self.event.wait().__await__()
+
+    def set_exception(self, exc):
+        self.exception = exc
+        self.event.set()
+        raise exc
+
+    def set_result(self, result):
+        self.result = result
+        self.event.set()
+
+    def done(self):
+        return self.event.is_set()
+
+    async def wait(self):
+        await self.event.wait()
+        return self.result
 
 
 class Application(Generic[_AppResult]):
@@ -264,8 +299,10 @@ class Application(Generic[_AppResult]):
         self.pre_run_callables: List[Callable[[], None]] = []
 
         self._is_running = False
-        self.future: Optional[Future[_AppResult]] = None
-        self.loop: Optional[AbstractEventLoop] = None
+        #self.future: Optional[Future[_AppResult]] = None  #z
+        #self.loop: Optional[AbstractEventLoop] = None  #z
+        self.future = None  #z
+        self.loop = None  #z
         self.context: Optional[contextvars.Context] = None
 
         #: Quoted insert. This flag is set if we go into quoted insert mode.
@@ -285,7 +322,7 @@ class Application(Generic[_AppResult]):
 
         #: Like Vim's `timeoutlen` option. This can be `None` or a float.  For
         #: instance, suppose that we have a key binding AB and a second key
-        #: binding A. If the uses presses A and then waits, we don't handle
+        #: binding A. If the user presses A and then waits, we don't handle
         #: this binding yet (unless it was marked 'eager'), because we don't
         #: know what will follow. This timeout is the maximum amount of time
         #: that we wait until we call the handlers anyway. Pass `None` to
@@ -321,7 +358,8 @@ class Application(Generic[_AppResult]):
         # If `run_in_terminal` was called. This will point to a `Future` what will be
         # set at the point when the previous run finishes.
         self._running_in_terminal = False
-        self._running_in_terminal_f: Optional[Future[None]] = None
+        #self._running_in_terminal_f: Optional[Future[None]] = None  #z
+        self._running_in_terminal_f = None  #z trio.Event
 
         # Trigger initialize callback.
         self.reset()
@@ -396,7 +434,8 @@ class Application(Generic[_AppResult]):
 
         self.exit_style = ''
 
-        self.background_tasks: List[Task] = []
+        #z self.background_tasks: List[Task] = []
+        #self.background_tasks = []
 
         self.renderer.reset()
         self.key_processor.reset()
@@ -437,7 +476,7 @@ class Application(Generic[_AppResult]):
             self._redraw()
 
         def schedule_redraw() -> None:
-            call_soon_threadsafe(
+            call_soon_threadsafe(  #z
                 redraw, max_postpone_time=self.max_render_postpone_time,
                 loop=self.loop)
 
@@ -447,9 +486,11 @@ class Application(Generic[_AppResult]):
             diff = time.time() - self._last_redraw_time
             if diff < self.min_redraw_interval:
                 async def redraw_in_future() -> None:
-                    await sleep(cast(float, self.min_redraw_interval) - diff)
+                    #z await sleep(cast(float, self.min_redraw_interval) - diff)
+                    await trio.sleep(cast(float, self.min_redraw_interval) - diff)
                     schedule_redraw()
-                self.create_background_task(redraw_in_future())
+                self.create_background_task(redraw_in_future)
+                #self.nursery.start_soon(redraw_in_future)
             else:
                 schedule_redraw()
         else:
@@ -461,6 +502,7 @@ class Application(Generic[_AppResult]):
         return self._invalidated
 
     def _redraw(self, render_as_done: bool = False) -> None:
+        #logging.debug("------->>> IN _redraw")
         """
         Render the command line again. (Not thread safe!) (From other threads,
         or if unsure, use :meth:`.Application.invalidate`.)
@@ -468,6 +510,7 @@ class Application(Generic[_AppResult]):
         :param render_as_done: make sure to put the cursor after the UI.
         """
         def run_in_context() -> None:
+            #logging.debug("------->>> IN _redraw::run_in_context")
             # Only draw when no sub application was started.
             if self._is_running and not self._running_in_terminal:
                 if self.min_redraw_interval:
@@ -498,20 +541,29 @@ class Application(Generic[_AppResult]):
         #       application is not the active one. (Like the
         #       `PromptSession._auto_refresh_context`).
         if self.context is not None:
+            #logging.debug("------->>> IN BEFORE _redraw::run_in_context")
             self.context.run(run_in_context)
+            #logging.debug("------->>> IN AFTER _redraw::run_in_context")
 
     def _start_auto_refresh_task(self) -> None:
         """
         Start a while/true loop in the background for automatic invalidation of
         the UI.
         """
+        #logging.debug("!!!!!!!!!!!!!!!!!!!<><> _start_auto_refresh_task <><>")
         async def auto_refresh():
+            #logging.debug("----BEFORE---- auto_refresh")
             while True:
-                await sleep(self.refresh_interval)
+                #z await sleep(self.refresh_interval)
+                await trio.sleep(self.refresh_interval)
                 self.invalidate()
+            #logging.debug("----AFTER---- auto_refresh")
 
         if self.refresh_interval:
-            self.create_background_task(auto_refresh())
+            #logging.debug("!!!!!!!!!!!!!!!!!!!<><> IN___start_auto_refresh_task <><>")
+            #z self.create_background_task(auto_refresh())
+            self.create_background_task(auto_refresh)
+        #logging.debug("!!!!!!!!!!!!!!!!!!!<><> EXIT___start_auto_refresh_task <><>")
 
     def _update_invalidate_events(self) -> None:
         """
@@ -559,11 +611,14 @@ class Application(Generic[_AppResult]):
 
     def _pre_run(self, pre_run: Optional[Callable[[], None]] = None) -> None:
         " Called during `run`. "
+        #LOG.debug("!!!!!!!!! in _pre_run")
         if pre_run:
+            #LOG.debug("!!!!!!!!! in _pre_run - pre_run()")
             pre_run()
 
         # Process registered "pre_run_callables" and clear list.
         for c in self.pre_run_callables:
+            #LOG.debug(f"!!!!!!!!! in _pre_run - c()")
             c()
         del self.pre_run_callables[:]
 
@@ -584,17 +639,19 @@ class Application(Generic[_AppResult]):
 
             use_asyncio_event_loop()
             get_event_loop().run_until_complete(
-                application.run_async().to_asyncio_future())
+                a pplication.run_async().to_asyncio_future())
 
         """
         assert not self._is_running, 'Application is already running.'
 
         async def _run_async() -> _AppResult:
             " Coroutine. "
-            loop = get_event_loop()
-            f = loop.create_future()
+            #z loop = get_event_loop()
+            #z f = loop.create_future()
+            #logging.debug(">>>>>>>>>>>>>>-->>>>  RUN ASYNC..........")
+            f = TrioFuture()
             self.future = f  # XXX: make sure to set this before calling '_redraw'.
-            self.loop = loop
+            # self.loop = loop  #z
             self.context = contextvars.copy_context()
 
             # Counter for cancelling 'flush' timeouts. Every time when a key is
@@ -603,17 +660,23 @@ class Application(Generic[_AppResult]):
             # the current timer will be ignored.
             flush_counter = 0
 
+            #logging.debug("[___RUN_ASYNC___] <><> >>> before reset")
             # Reset.
             self.reset()
+            #LOG.debug("--->>> before self._pre_run")
             self._pre_run(pre_run)
+            #LOG.debug("--->>> after self._pre_run")
 
+            #logging.debug("[___RUN_ASYNC___] <><> >>> before key processor")
             # Feed type ahead input first.
             self.key_processor.feed_multiple(get_typeahead(self.input))
             self.key_processor.process_keys()
 
             def read_from_input() -> None:
+                #LOG.debug("Before read from input")
                 nonlocal flush_counter
 
+                #logging.debug("... ... ... read_from_input")
                 # Ignore when we aren't running anymore. This callback will
                 # removed from the loop next time. (It could be that it was
                 # still in the 'tasks' list of the loop.)
@@ -622,44 +685,73 @@ class Application(Generic[_AppResult]):
                     return
 
                 # Get keys from the input object.
+                #LOG.debug(f"RFI Before read_keys {self.input}")
                 keys = self.input.read_keys()
+                #LOG.debug(f"RFI After read_keys {keys}")
 
                 # Feed to key processor.
                 self.key_processor.feed_multiple(keys)
                 self.key_processor.process_keys()
+                #LOG.debug("RFI AFTER key_processor")
 
-                # Quit when the input stream was closed.
+                # Quit when the input stream is closed.
                 if self.input.closed:
+                    #LOG.debug("RFI quit when input stream was closed")
                     f.set_exception(EOFError)
                 else:
+                    #LOG.debug("RFI increase flush counter")
                     # Increase this flush counter.
                     flush_counter += 1
                     counter = flush_counter
 
                     # Automatically flush keys.
-                    self.create_background_task(auto_flush_input(counter))
+                    #self.nursery.start_soon(auto_flush_input, counter)  # ???
+                    self.create_background_task(partial(auto_flush_input, counter))
+
+                    #LOG.debug("RFI started flusher in background")
+                    #LOG.debug(self._nursery.child_tasks)
+                    # debug
+                    #async def log_tasks_repeat():
+                    #    while True:
+                    #        await trio.sleep(1)
+                    #        #LOG.debug(trio.hazmat.current_statistics())
+                    #        #LOG.debug(trio.hazmat.current_kqueue())
+                    #        LOG.debug(trio.hazmat.current_task())
+                    #self._nursery.start_soon(log_tasks_repeat)
+                    # debug
 
             async def auto_flush_input(counter: int) -> None:
                 # Flush input after timeout.
                 # (Used for flushing the enter key.)
-                await sleep(self.ttimeoutlen)
+                #z await sleep(self.ttimeoutlen)
+                #LOG.debug("AFI before sleep")
+                await trio.sleep(self.ttimeoutlen)
+                #LOG.debug("AFI after sleep")
 
                 if flush_counter == counter:
                     flush_input()
+                #LOG.debug("AFI after flush")
 
             def flush_input() -> None:
+                #LOG.debug("FI enter")
                 if not self.is_done:
+                    #LOG.debug("FI not done")
                     # Get keys, and feed to key processor.
                     keys = self.input.flush_keys()
                     self.key_processor.feed_multiple(keys)
                     self.key_processor.process_keys()
+                    #LOG.debug("FI AFTER process keys")
 
                     if self.input.closed:
+                        #LOG.debug("FI input closed")
                         f.set_exception(EOFError)
 
             # Enter raw mode.
+            #logging.debug("[___RUN_ASYNC___] <><> >>> enter raw mode")
             with self.input.raw_mode():
-                with self.input.attach(read_from_input):
+                #logging.debug("[___RUN_ASYNC___] <><> >>> ETNERES raw mode")
+                with self.input.attach(read_from_input, nursery=self._nursery):
+                    #LOG.debug("[___RUN_ASYNC___] <><> >>> IN input.attach")
                     # Draw UI.
                     self._request_absolute_cursor_position()
                     self._redraw()
@@ -668,12 +760,20 @@ class Application(Generic[_AppResult]):
                     has_sigwinch = hasattr(signal, 'SIGWINCH') and in_main_thread()
                     if has_sigwinch:
                         previous_winch_handler = signal.getsignal(signal.SIGWINCH)
-                        loop.add_signal_handler(signal.SIGWINCH, self._on_resize)
+
+                        #loop.add_signal_handler(signal.SIGWINCH, self._on_resize)  #z
 
                     # Wait for UI to finish.
                     try:
-                        result = await f
+                        #z result = await f
+                        #LOG.debug(">>> ---- >>> WAIT for result in app <<< ---- <<<")
+                        #LOG.debug(self._nursery.child_tasks)
+                        result = await f.wait()
+                        #LOG.debug(f">>> ----- >>> GOT result in app!!! >{result}<")
+                    except trio.Cancelled:
+                        pass
                     finally:
+                        #logging.debug(">>> ----- >>> FINALLY???!!!")
                         # In any case, when the application finishes. (Successful,
                         # or because of an error.)
                         try:
@@ -702,14 +802,14 @@ class Application(Generic[_AppResult]):
                                 await self.renderer.wait_for_cpr_responses()
 
                             if has_sigwinch:
-                                loop.remove_signal_handler(signal.SIGWINCH)
+                                # loop.remove_signal_handler(signal.SIGWINCH)
                                 signal.signal(signal.SIGWINCH, previous_winch_handler)
 
                             # Wait for the run-in-terminals to terminate.
                             previous_run_in_terminal_f = self._running_in_terminal_f
 
                             if previous_run_in_terminal_f:
-                                await previous_run_in_terminal_f
+                                await previous_run_in_terminal_f  #z
 
                             # Store unprocessed input as typeahead for next time.
                             store_typeahead(self.input, self.key_processor.empty_queue())
@@ -719,20 +819,23 @@ class Application(Generic[_AppResult]):
         async def _run_async2() -> _AppResult:
             self._is_running = True
             with set_app(self):
-                try:
-                    result = await _run_async()
-                finally:
-                    # Wait for the background tasks to be done. This needs to
-                    # go in the finally! If `_run_async` raises
-                    # `KeyboardInterrupt`, we still want to wait for the
-                    # background tasks.
-                    await self.cancel_and_wait_for_background_tasks()
+                async with trio.open_nursery() as nursery: #z
+                    try:
+                        self._nursery = nursery
+                        result = await _run_async()  #z
+                    finally:
+                        # Wait for the background tasks to be done. This needs to
+                        # go in the finally! If `_run_async` raises
+                        # `KeyboardInterrupt`, we still want to wait for the
+                        # background tasks.
+                        #z await self.cancel_and_wait_for_background_tasks()
+                        nursery.cancel_scope.cancel()
 
-                    # Set the `_is_running` flag to `False`. Normally this
-                    # happened already in the finally block in `run_async`
-                    # above, but in case of exceptions, that's not always the
-                    # case.
-                    self._is_running = False
+                        # Set the `_is_running` flag to `False`. Normally this
+                        # happened already in the finally block in `run_async`
+                        # above, but in case of exceptions, that's not always the
+                        # case.
+                self._is_running = False
                 return result
 
         return await _run_async2()
@@ -746,11 +849,15 @@ class Application(Generic[_AppResult]):
             of the alternate screen and hide the application, display the
             exception, and wait for the user to press ENTER.
         """
-        loop = get_event_loop()
+        # loop = get_event_loop()  #z
+
+        #logging.debug("<><> APP  IN  RUN <><>")
 
         def run() -> _AppResult:
-            coro = self.run_async(pre_run=pre_run)
-            return get_event_loop().run_until_complete(coro)
+            #z coro = self.run_async(pre_run=pre_run)
+            #z return get_event_loop().run_until_complete(coro)
+            #logging.debug("<><> APP  IN  !!!!!!RUN:RUN!!!!!!!!!! <><>")
+            trio.run(partial(self.run_async, pre_run=pre_run))
 
         def handle_exception(loop, context: Dict[str, Any]) -> None:
             " Print the exception, using run_in_terminal. "
@@ -761,7 +868,7 @@ class Application(Generic[_AppResult]):
             tb = get_traceback_from_context(context)
             formatted_tb = ''.join(format_tb(tb))
 
-            async def in_term() -> None:
+            async def in_term() -> None:  #z
                 async with in_terminal():
                     # Print output. Similar to 'loop.default_exception_handler',
                     # but don't use logger. (This works better on Python 2.)
@@ -770,46 +877,62 @@ class Application(Generic[_AppResult]):
                     print('Exception %s' % (context.get('exception'), ))
 
                     await _do_wait_for_enter('Press ENTER to continue...')
-            ensure_future(in_term())
+            # ensure_future(in_term())
+            #logging.debug("?????????????????????? handle_exception")
+            self._nursery.start_soon(in_term)
 
+        #logging.debug("<><> APP  IN  RUN2222222222222 <><>")
         if set_exception_handler:
             # Run with patched exception handler.
-            previous_exc_handler = loop.get_exception_handler()
-            loop.set_exception_handler(handle_exception)
-            try:
-                return run()
-            finally:
-                loop.set_exception_handler(previous_exc_handler)
+            # previous_exc_handler = loop.get_exception_handler()
+            # loop.set_exception_handler(handle_exception)
+            # try:
+            #     return run()
+            # finally:
+            #     loop.set_exception_handler(previous_exc_handler)
+            #logging.debug("++++++++++++++++ in set_exception_handerl")
+            return run()
         else:
+            #logging.debug("++++++++++++++++ in NOT set_exception_handerl")
             return run()
 
-    def create_background_task(self, coroutine: Awaitable[None]) -> 'asyncio.Task[None]':
+    #z def create_background_task(self, coroutine: Awaitable[None]) -> 'asyncio.Task[None]':
+    def create_background_task(self, coroutine):
         """
         Start a background task (coroutine) for the running application.
         If asyncio had nurseries like Trio, we would create a nursery in
         `Application.run_async`, and run the given coroutine in that nursery.
         """
-        task = get_event_loop().create_task(coroutine)
-        self.background_tasks.append(task)
-        return task
+        #z task = get_event_loop().create_task(coroutine)
+        #z self.background_tasks.append(task)
+        #z return task
+        #print(coroutine)
+        if hasattr(self, '_nursery') and self._nursery:
+            #logging.debug(f"<><>BGTASK._nursery {coroutine}")
+            self._nursery.start_soon(coroutine)
+        else:
+            from . import current
+            if current.nursery:
+                #logging.debug(f"<><>BGTASK.current.nursery {coroutine}")
+                current.nursery.start_soon(coroutine)
 
-    async def cancel_and_wait_for_background_tasks(self) -> None:
-        """
-        Cancel all background tasks, and wait for the cancellation to be done.
-        If any of the background tasks raised an exception, this will also
-        propagate the exception.
-
-        (If we had nurseries like Trio, this would be the `__aexit__` of a
-        nursery.)
-        """
-        for task in self.background_tasks:
-            task.cancel()
-
-        for task in self.background_tasks:
-            try:
-                await task
-            except CancelledError:
-                pass
+    #z async def cancel_and_wait_for_background_tasks(self) -> None:
+    #z     """
+    #z     Cancel all background tasks, and wait for the cancellation to be done.
+    #z     If any of the background tasks raised an exception, this will also
+    #z     propagate the exception.
+    #z
+    #z     (If we had nurseries like Trio, this would be the `__aexit__` of a
+    #z     nursery.)
+    #z     """
+    #z     for task in self.background_tasks:
+    #z         task.cancel()
+    #z
+    #z     for task in self.background_tasks:
+    #z         try:
+    #z             await task
+    #z         except CancelledError:
+    #z             pass
 
     def cpr_not_supported_callback(self) -> None:
         """
@@ -850,6 +973,7 @@ class Application(Generic[_AppResult]):
             often this is 'class:exiting' for a prompt. (Used when
             `erase_when_done` is not set.)
         """
+        #LOG.debug("<><><><><><><><><><><> ___EXIT___ <><><><><><><><><><>")
         assert result is None or exception is None
 
         if self.future is None:
@@ -875,7 +999,9 @@ class Application(Generic[_AppResult]):
         # value has not been set. Otherwise, we won't be able to read the
         # response anyway.
         if not self.key_processor.input_queue and not self.is_done:
+            #logging.debug("<<<<>>>> IN BEFORE_request_absolute_cursor_position")
             self.renderer.request_absolute_cursor_position()
+            #logging.debug("<<<<>>>> IN AFTER_request_absolute_cursor_position")
 
     async def run_system_command(
             self, command: str,
@@ -966,7 +1092,7 @@ class Application(Generic[_AppResult]):
     @property
     def is_done(self) -> bool:
         if self.future:
-            return self.future.done()
+            return self.future.done()  #z
         return False
 
     def get_used_style_strings(self) -> List[str]:

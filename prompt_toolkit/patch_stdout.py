@@ -19,9 +19,14 @@ other.
 """
 import sys
 import threading
-from asyncio import get_event_loop
+#from asyncio import get_event_loop
 from contextlib import contextmanager
 from typing import Generator, List, Optional, TextIO, cast
+
+import trio
+#import logging, sys
+#logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+#LOG = logging.getLogger("patch_stdout")
 
 from .application import run_in_terminal
 
@@ -32,7 +37,7 @@ __all__ = [
 
 
 @contextmanager
-def patch_stdout(raw: bool = False) -> Generator[None, None, None]:
+def patch_stdout(raw: bool = False, nursery=None) -> Generator[None, None, None]:
     """
     Replace `sys.stdout` by an :class:`_StdoutProxy` instance.
 
@@ -44,7 +49,7 @@ def patch_stdout(raw: bool = False) -> Generator[None, None, None]:
     :param raw: (`bool`) When True, vt100 terminal escape sequences are not
                 removed/escaped.
     """
-    proxy = cast(TextIO, StdoutProxy(raw=raw))
+    proxy = cast(TextIO, StdoutProxy(raw=raw, nursery=nursery))
 
     original_stdout = sys.stdout
     original_stderr = sys.stderr
@@ -69,7 +74,8 @@ class StdoutProxy:
     the current application.
     """
     def __init__(self, raw: bool = False,
-                 original_stdout: Optional[TextIO] = None) -> None:
+                 original_stdout: Optional[TextIO] = None,
+                 nursery=None) -> None:
 
         original_stdout = original_stdout or sys.__stdout__
 
@@ -83,7 +89,8 @@ class StdoutProxy:
         self.errors = original_stdout.errors
         self.encoding = original_stdout.encoding
 
-        self.loop = get_event_loop()
+        #self.loop = get_event_loop()
+        self.nursery = nursery
 
     def _write_and_flush(self, text: str) -> None:
         """
@@ -99,14 +106,19 @@ class StdoutProxy:
             self.original_stdout.write(text)
             self.original_stdout.flush()
 
-        def write_and_flush_in_loop() -> None:
+        async def write_and_flush_in_loop() -> None:
+            #z is it `run_in_executor_with_context`?
             # If an application is running, use `run_in_terminal`, otherwise
             # call it directly.
-            run_in_terminal(write_and_flush, in_executor=False)
+            #LOG.debug(f"<>inner<> {self.nursery}")
+            run_in_terminal(write_and_flush, in_executor=False, nursery=self.nursery)
 
         # Make sure `write_and_flush` is executed *in* the event loop, not in
         # another thread.
-        self.loop.call_soon_threadsafe(write_and_flush_in_loop)
+        #self.loop.call_soon_threadsafe(write_and_flush_in_loop)
+        #LOG.debug(f"<>outer<> {self.nursery}")
+        #self.nursery.start_soon(trio.to_thread.run_sync, write_and_flush_in_loop)
+        self.nursery.start_soon(write_and_flush_in_loop)
 
     def _write(self, data: str) -> None:
         """

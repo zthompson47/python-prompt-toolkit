@@ -60,7 +60,7 @@ class History(metaclass=ABCMeta):
         " Start loading the history. "
         if not self._loading:
             self._loading = True
-            get_app().create_background_task(self._start_loading())
+            get_app().create_background_task(self._start_loading)
 
     def get_item_loaded_event(self) -> Event['History']:
         " Event which is triggered when a new item is loaded. "
@@ -114,7 +114,7 @@ class ThreadedHistory(History):
     """
     Wrapper that runs the `load_history_strings` generator in a thread.
 
-    Use this to increase the start-up time of prompt_toolkit applications.
+    Use this to <z>decrease?</z>increase the start-up time of prompt_toolkit applications.
     History entries are available as soon as they are loaded. We don't have to
     wait for everything to be loaded.
     """
@@ -187,7 +187,7 @@ class FileHistory(History):
 
                 strings.append(string)
 
-        if os.path.exists(self.filename):
+        if os.path.exists(self.filename):  #z
             with open(self.filename, 'rb') as f:
                 for line_bytes in f:
                     line = line_bytes.decode('utf-8')
